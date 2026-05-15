@@ -546,6 +546,7 @@ Func FillFarmMap()
 	AddFarmToFarmMap(	'Storage',						InventoryManagementBeforeRun,	5,					2 * 60 * 1000)
 	AddFarmToFarmMap(	'Tests',						RunTests,						0,					2 * 60 * 1000)
 	AddFarmToFarmMap(	'TestSuite',					RunTestSuite,					0,					5 * 60 * 1000)
+	AddFarmToFarmMap(	'DevSuite',						RunDevSuite,					0,					5 * 60 * 1000)
 	AddFarmToFarmMap(	'',								Null,							0,					2 * 60 * 1000)
 EndFunc
 
