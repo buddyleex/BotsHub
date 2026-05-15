@@ -144,6 +144,8 @@ $run_options_cache['run.donate_faction_points'] = True
 $run_options_cache['run.buy_faction_scrolls'] = False
 $run_options_cache['run.buy_faction_resources'] = False
 $run_options_cache['run.collect_data'] = False
+$run_options_cache['run.go_offline'] = False
+$run_options_cache['run.flash_whisper'] = False
 $run_options_cache['team.automatic_team_setup'] = False
 ; Overrides on $run_options_cache for frequent usage
 Global $district_name = 'Random EU'
@@ -214,6 +216,8 @@ Func BotsHubMain()
 		EndIf
 		; Authentication
 		Authentification($character_name)
+		If $run_options_cache['run.go_offline'] Then SetPlayerStatus(0)
+		If $run_options_cache['run.flash_whisper'] Then EnableWhisperFlash()
 		$runtime_status = 'RUNNING'
 
 		If Not OpenMasterSlaveSharedMemory($slave_index) Then Error('Unable to open shared memory blocks.')
@@ -574,6 +578,7 @@ Func FillFarmMap()
 	AddFarmToFarmMap(	'Storage',						InventoryManagementBeforeRun,	5,					2 * 60 * 1000)
 	AddFarmToFarmMap(	'Tests',						RunTests,						0,					2 * 60 * 1000)
 	AddFarmToFarmMap(	'TestSuite',					RunTestSuite,					0,					5 * 60 * 1000)
+	AddFarmToFarmMap(	'DevSuite',						RunDevSuite,					0,					5 * 60 * 1000)
 	AddFarmToFarmMap(	'',								Null,							0,					2 * 60 * 1000)
 EndFunc
 
