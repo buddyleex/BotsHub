@@ -25,7 +25,7 @@
 Opt('MustDeclareVars', True)
 
 ; ==== Constants ====
-Global Const $DW_COMMENDATIONS_FARMER_SKILLBAR = 'OgGlQlVp6smsJRg19RTKexTkL2XsDC'
+Global Const $DW_COMMENDATIONS_FARMER_SKILLBAR = 'OgGlQpVq6smsGRg19RTKexTkL2XsDC'
 Global Const $COMMENDATIONS_FARM_INFORMATIONS = 'For best results, have :' & @CRLF _
 	& '- a full hero team that can clear HM content easily' & @CRLF _
 	& '- 13 Earth Prayers' &@CRLF _
@@ -86,12 +86,14 @@ Global Const $HERO_MESMER_DPS_1			= 1
 Global Const $HERO_MESMER_DPS_2			= 2
 Global Const $HERO_MESMER_DPS_3			= 3
 Global Const $HERO_MESMER_INEPTITUDE	= 4
-Global Const $HERO_RITUALIST_SOS		= 5
-Global Const $HERO_RITUALIST_PROT		= 6
+Global Const $HERO_RITUALIST_PROT		= 5
+Global Const $HERO_RITUALIST_SOS		= 6
 Global Const $HERO_NECRO_BIP			= 7
 
-Global Const $ID_MESMER_MERCENARY_HERO = $ID_MERCENARY_HERO_1
-Global Const $ID_RITUALIST_MERCENARY_HERO = $ID_MERCENARY_HERO_2
+Global Const $ID_MESMER_MERCENARY_HERO_1 = $ID_MERCENARY_HERO_1
+Global Const $ID_MESMER_MERCENARY_HERO_2 = $ID_MERCENARY_HERO_2
+Global Const $ID_MESMER_MERCENARY_HERO_3 = $ID_MERCENARY_HERO_4
+Global Const $ID_RITUALIST_MERCENARY_HERO = $ID_MERCENARY_HERO_3
 
 #CS ===========================================================================
 Character location :	X: -6322,	Y: -5266
@@ -154,10 +156,10 @@ Func SetupPlayerMinisterialCommendationsFarm()
 	If DllStructGetData(GetMyAgent(), 'Primary') == $ID_DERVISH Then
 		Info('Player''s profession is dervish. Loading up recommended dervish build automatically')
 		LoadSkillTemplate($DW_COMMENDATIONS_FARMER_SKILLBAR)
-		RandomSleep(250)
 	Else
 		Info('Assuming player build is set up manually')
 	EndIf
+	RandomSleep(250)
 EndFunc
 
 
@@ -166,13 +168,14 @@ Func SetupTeamMinisterialCommendationsFarm()
 
 	Info('Setting up team')
 	LeaveParty()
+	RandomSleep(500)
+	AddHero($ID_MESMER_MERCENARY_HERO_1)
+	AddHero($ID_MESMER_MERCENARY_HERO_2)
+	AddHero($ID_MESMER_MERCENARY_HERO_3)
 	AddHero($ID_GWEN)
-	AddHero($ID_NORGU)
-	AddHero($ID_RAZAH)
-	AddHero($ID_MESMER_MERCENARY_HERO)
-	AddHero($ID_RITUALIST_MERCENARY_HERO)
 	AddHero($ID_XANDRA)
-	AddHero($ID_OLIAS)
+	AddHero($ID_RITUALIST_MERCENARY_HERO)
+	AddHero($ID_LIVIA)
 	RandomSleep(500)
 	If GetPartySize() <> 8 Then
 		Warn('Could not set up party correctly. Team size different than 8')
@@ -499,9 +502,9 @@ Func WaitForPurityBall()
 		EndIf
 		If DllStructGetData(GetMyAgent(), 'HealthPercent') < 0.70 Then
 			; Heroes with Mystic Healing provide additional long range support
+			UseHeroSkill($HERO_MESMER_DPS_1, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 			UseHeroSkill($HERO_MESMER_DPS_2, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
-			UseHeroSkill($HERO_RITUALIST_SOS, $SOS_MYSTIC_HEALING_SKILL_POSITION)
-			UseHeroSkill($HERO_RITUALIST_PROT, $PROT_MYSTIC_HEALING_SKILL_POSITION)
+			UseHeroSkill($HERO_MESMER_DPS_3, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 		EndIf
 
 		$foesCount = CountFoesInRangeOfAgent(GetMyAgent(), $RANGE_NEARBY)
@@ -545,9 +548,9 @@ Func KillMinistryOfPurity()
 
 	If DllStructGetData(GetMyAgent(), 'HealthPercent') < 0.70 Then
 		; Heroes with Mystic Healing provide additional long range support
+		UseHeroSkill($HERO_MESMER_DPS_1, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 		UseHeroSkill($HERO_MESMER_DPS_2, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
-		UseHeroSkill($HERO_RITUALIST_SOS, $SOS_MYSTIC_HEALING_SKILL_POSITION)
-		UseHeroSkill($HERO_RITUALIST_PROT, $PROT_MYSTIC_HEALING_SKILL_POSITION)
+		UseHeroSkill($HERO_MESMER_DPS_3, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 	EndIf
 
 	If IsPlayerDead() Then Return
@@ -573,9 +576,9 @@ Func KillMinistryOfPurity()
 		; Heroes with Mystic Healing provide additional long range support
 		If DllStructGetData(GetMyAgent(), 'HealthPercent') < 0.70 Then
 			; Heroes with Mystic Healing provide additional long range support
+			UseHeroSkill($HERO_MESMER_DPS_1, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 			UseHeroSkill($HERO_MESMER_DPS_2, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
-			UseHeroSkill($HERO_RITUALIST_SOS, $SOS_MYSTIC_HEALING_SKILL_POSITION)
-			UseHeroSkill($HERO_RITUALIST_PROT, $PROT_MYSTIC_HEALING_SKILL_POSITION)
+			UseHeroSkill($HERO_MESMER_DPS_3, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 		EndIf
 
 		$adrenaline = GetSkillbarSkillAdrenaline($SKILL_WHIRLWIND_ATTACK)
@@ -600,9 +603,9 @@ Func KillMinistryOfPurity()
 		If IsPlayerDead() Then Return
 		If DllStructGetData(GetMyAgent(), 'HealthPercent') < 0.70 Then
 			; Heroes with Mystic Healing provide additional long range support
+			UseHeroSkill($HERO_MESMER_DPS_1, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 			UseHeroSkill($HERO_MESMER_DPS_2, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
-			UseHeroSkill($HERO_RITUALIST_SOS, $SOS_MYSTIC_HEALING_SKILL_POSITION)
-			UseHeroSkill($HERO_RITUALIST_PROT, $PROT_MYSTIC_HEALING_SKILL_POSITION)
+			UseHeroSkill($HERO_MESMER_DPS_3, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 		EndIf
 
 		If (IsRecharged($SKILL_TO_THE_LIMIT) And GetSkillbarSkillAdrenaline($SKILL_WHIRLWIND_ATTACK) < 130) Then
@@ -652,9 +655,9 @@ Func HealWhilePickingItems()
 		;	Sleep(20 + GetPing())
 		EndIf
 		; Heroes with Mystic Healing provide additional long range support
+		UseHeroSkill($HERO_MESMER_DPS_1, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 		UseHeroSkill($HERO_MESMER_DPS_2, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
-		UseHeroSkill($HERO_RITUALIST_SOS, $SOS_MYSTIC_HEALING_SKILL_POSITION)
-		UseHeroSkill($HERO_RITUALIST_PROT, $PROT_MYSTIC_HEALING_SKILL_POSITION)
+		UseHeroSkill($HERO_MESMER_DPS_3, $ESURGE2_MYSTIC_HEALING_SKILL_POSITION)
 	EndIf
 EndFunc
 
