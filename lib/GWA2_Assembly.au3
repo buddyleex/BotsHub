@@ -5,9 +5,11 @@
 #CE ===========================================================================
 
 #include-once
-
+#include 'GWA2.au3'
 #include 'GWA2_Headers.au3'
+#include 'Utils-Console.au3'
 #include 'Utils-Debugger.au3'
+#include 'Utils.au3'
 
 ; Required for memory access, opening external process handles and injecting code
 #RequireAdmin

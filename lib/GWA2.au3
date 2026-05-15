@@ -6,10 +6,15 @@
 
 #include-once
 
+#include 'GWA2_Assembly.au3'
 #include 'GWA2_Headers.au3'
+#include 'GWA2_ID_Items.au3'
+#include 'GWA2_ID_Maps.au3'
 #include 'GWA2_ID.au3'
 #include 'Utils.au3'
+#include 'Utils-Console.au3'
 #include 'Utils-Debugger.au3'
+#include 'Utils-Storage.au3'
 
 ; Required for memory access, opening external process handles and injecting code
 #RequireAdmin
@@ -260,12 +265,6 @@ EndFunc
 ;~ Open a chest.
 Func OpenChest()
 	Return SendPacket(0x8, $HEADER_OPEN_CHEST, 2)
-EndFunc
-
-
-;~ Opens the Xunlai storage window.
-Func OpenXunlaiWindow()
-	Enqueue($OPEN_XUNLAI_STRUCT_PTR, DllStructGetSize($OPEN_XUNLAI_STRUCT))
 EndFunc
 
 
@@ -2759,8 +2758,8 @@ EndFunc
 
 ;~ Change online status. 0 = Offline, 1 = Online, 2 = Do not disturb, 3 = Away
 Func SetPlayerStatus($status)
-	If $status < 0 Or $status > 3 Then
-		Warn('Provided an incorrect status.')
+	If $status < 0 Or $status > 3 Or GetPlayerStatus() == $status Then
+		Warn('Provided an incorrect status - or the player is already in the provided status.')
 		Return False
 	EndIf
 	DllStructSetData($CHANGE_STATUS_STRUCT, 2, $status)

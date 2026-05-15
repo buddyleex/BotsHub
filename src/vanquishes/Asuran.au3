@@ -16,14 +16,14 @@
 #CE ===========================================================================
 
 #include-once
-#RequireAdmin
-#NoTrayIcon
 
-#include '../../lib/GWA2.au3'
+#include '../../lib/GWA2_ID_Maps.au3'
+#include '../../lib/GWA2_ID_Skills.au3'
 #include '../../lib/GWA2_ID.au3'
+#include '../../lib/Utils-Agents.au3'
+#include '../../lib/Utils-Console.au3'
+#include '../../lib/Utils-Storage.au3'
 #include '../../lib/Utils.au3'
-
-Opt('MustDeclareVars', True)
 
 ; ==== Constants ====
 Global Const $ASURAN_FARM_INFORMATIONS = 'Asuran title farm, bring solid heroes composition'

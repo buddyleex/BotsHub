@@ -27,19 +27,29 @@
 #RequireAdmin
 #NoTrayIcon
 
+Opt('MustDeclareVars', True)
+;Opt("ExpandEnvStrings", 1)
+
 #Region Includes
+#include-once
 #include <Math.au3>
-#include 'lib/GWA2_Headers.au3'
-#include 'lib/GWA2_ID.au3'
+
+#include 'lib/BotsHub-GUI.au3'
 #include 'lib/GWA2.au3'
 #include 'lib/GWA2_Assembly.au3'
 #include 'lib/GWA2_Assembly_Chatlog.au3'
+#include 'lib/GWA2_ID.au3'
+#include 'lib/GWA2_ID_Maps.au3'
+#include 'lib/GWA2_ID_Skills.au3'
+#include 'lib/JSON.au3'
 #include 'lib/Utils.au3'
-#include 'lib/Utils-Agents.au3'
-#include 'lib/Utils-Storage.au3'
+#include 'lib/Utils-Console.au3'
 #include 'lib/Utils-Debugger.au3'
+#include 'lib/Utils-Items_Modstructs.au3'
+#include 'lib/Utils-Shared_Memory.au3'
+#include 'lib/Utils-Multibox.au3'
+#include 'lib/Utils-Storage.au3'
 #include 'lib/Build_PW_Heroic-Refrain.au3'
-#include 'lib/BotsHub-GUI.au3'
 
 #include 'src/farms/CoF.au3'
 #include 'src/farms/Corsairs.au3'
@@ -96,10 +106,6 @@ Global Const $SUCCESS = 0
 Global Const $FAIL = 1
 Global Const $PAUSE = 2
 
-Global Const $AVAILABLE_FARMS = '|Asuran|Boreal|CoF|Corsairs|Deldrimor|Dragon Moss|Eden Iris|Feathers|Follower|FoW|FoW Tower of Courage|Froggy|Gemstones|Gemstone Margonite|Gemstone Stygian|Gemstone Torment|' & _
-	'Glint Challenge|Jade Brotherhood|Kournans|Kurzick|Kurzick Drazach|Lightbringer & Sunspear|Lightbringer|LDOA|Luxon|Mantids|Ministerial Commendations|Minotaurs|Nexus Challenge|Norn|OmniFarm|Pongmei|' & _
-	'Raptors|SoO|SpiritSlaves|Sunspear Armor|Tasca|Underworld|Vaettirs|Vanguard|Voltaic|War Supply Keiran|Storage|Tests|TestSuite|DevSuite|Dynamic execution'
-
 Global Const $AVAILABLE_DISTRICTS = '|Random|Random EU|Random US|Random Asia|America|China|English|French|German|International|Italian|Japan|Korea|Polish|Russian|Spanish'
 
 Global Const $AVAILABLE_HEROES = '||Acolyte Jin|Acolyte Sousuke|Anton|Dunkoro|General Morgahn|Goren|Gwen|Hayda|Jora|Kahmu|Keiran Thackeray|Koss|Livia|' & _
@@ -119,7 +125,8 @@ Global $loot_configuration = 'Default Loot Configuration'
 Global $inventory_space_needed = 5
 Global $run_timer = Null
 Global $global_farm_setup = False
-Global $log_level = $LVL_INFO
+
+Global $slave_heartbeat = 0
 
 ; Farm Name;Farm function;Inventory space;Farm duration
 Global $farm_map[]
@@ -137,8 +144,6 @@ $run_options_cache['run.donate_faction_points'] = True
 $run_options_cache['run.buy_faction_scrolls'] = False
 $run_options_cache['run.buy_faction_resources'] = False
 $run_options_cache['run.collect_data'] = False
-$run_options_cache['run.go_offline'] = False
-$run_options_cache['run.flash_whisper'] = False
 $run_options_cache['team.automatic_team_setup'] = False
 ; Overrides on $run_options_cache for frequent usage
 Global $district_name = 'Random EU'
@@ -147,13 +152,13 @@ Global $bags_count = 5
 
 
 #Region Main loops
-Main()
+BotsHubMain()
 
 ;------------------------------------------------------
 ; Title...........:	Main
 ; Description.....:	run the main program
 ;------------------------------------------------------
-Func Main()
+Func BotsHubMain()
 	; Verify validity
 	If @AutoItVersion < '3.3.16.0' Then
 		MsgBox(16, 'Error', 'This bot requires AutoIt version 3.3.16.0 or higher. You are using ' & @AutoItVersion & '.')
@@ -172,7 +177,8 @@ Func Main()
 	LoadDefaultLootConfiguration()
 
 	If $run_mode == 'GUI' Then
-		CreateGUI()
+		$GUI_ENABLED = True
+		CreateBotsHubGUI()
 		ApplyConfigToGUI()
 		FillConfigurationCombo()
 		GUISetState(@SW_SHOWNORMAL)
@@ -181,6 +187,7 @@ Func Main()
 		ScanAndUpdateGameClients()
 		RefreshCharactersComboBox()
 	ElseIf $run_mode == 'HEADLESS' Then
+		$GUI_ENABLED = False
 		; Need minimum 4 things to run a bot: slave index, process ID, character name and farm name
 		If $cmdLine[0] < 4 Then
 			MsgBox(0, 'Error', 'The Hub needs 0 or at least 4 arguments.')
@@ -193,21 +200,31 @@ Func Main()
 
 		Info('Running in CMD mode with process ID: ' & $process_id & ' character name: ' & $character_name & ' farm name: ' & $farm_name)
 
-		Local $openProcess = SafeDllCall9($kernel_handle, 'int', 'OpenProcess', 'int', 0x1F0FFF, 'int', 1, 'int', $process_id)
-		Local $processHandle = IsArray($openProcess) ? $openProcess[0] : 0
-		If $processHandle <> 0 Then
-			Local $windowHandle = GetWindowHandleForProcess($process_id)
-			AddClient($process_id, $processHandle, $windowHandle, $character_name)
-			SelectClient(1)
-		Else
-			MsgBox(0, 'Error', 'GW Process with incorrect handle.')
-			Exit
+		If $character_name <> '' Then
+			Local $openProcess = SafeDllCall9($kernel_handle, 'int', 'OpenProcess', 'int', 0x1F0FFF, 'int', 1, 'int', $process_id)
+			Local $processHandle = IsArray($openProcess) ? $openProcess[0] : 0
+			If $processHandle <> 0 Then
+				Local $windowHandle = GetWindowHandleForProcess($process_id)
+				AddClient($process_id, $processHandle, $windowHandle, $character_name)
+				SelectClient(1)
+			Else
+				MsgBox(0, 'Error', 'GW Process with incorrect handle.')
+				Exit
+			EndIf
 		EndIf
 		; Authentication
 		Authentification($character_name)
-		If $run_options_cache['run.go_offline'] Then SetPlayerStatus(0)
-		If $run_options_cache['run.flash_whisper'] Then EnableWhisperFlash()
 		$runtime_status = 'RUNNING'
+
+		If Not OpenMasterSlaveSharedMemory($slave_index) Then Error('Unable to open shared memory blocks.')
+		AdlibRegister('UpdateHeartbeat', 5000)
+
+		; Open multibox shared memory for cross-account coordination
+		Local $totalSlaves = ($cmdLine[0] >= 5) ? Int($cmdLine[5]) : 1
+		If Not OpenMultiboxSharedMemory($slave_index, $totalSlaves) Then Warn('Unable to open multibox shared memory blocks.')
+		AdlibRegister('PublishAccountState', 500)
+		AdlibRegister('ProcessInboxMessages', 1000)
+		OnAutoItExitRegister('CleanupMultibox')
 	Else
 		MsgBox(0, 'Error', 'Unknown run mode: ' & $run_mode)
 		Exit
@@ -243,6 +260,11 @@ Func BotHubLoop()
 				EnableGUIComboboxes()
 			EndIf
 		EndIf
+
+		; Process deferred multibox commands from the main loop context
+		; (game queue writes only work reliably from here, not from AdlibRegister)
+		ProcessDeferredCommands()
+
 		Sleep(1000)
 	WEnd
 EndFunc
@@ -416,8 +438,6 @@ Func ReadConfigFromJson($jsonString)
 	$run_options_cache['run.sort_items'] = _JSON_Get($jsonObject, 'run.sort_items')
 	$run_options_cache['run.sort_items'] = _JSON_Get($jsonObject, 'run.sort_items')
 	$run_options_cache['run.collect_data'] = _JSON_Get($jsonObject, 'run.collect_data')
-	$run_options_cache['run.go_offline'] = _JSON_Get($jsonObject, 'run.go_offline')
-	$run_options_cache['run.flash_whisper'] = _JSON_Get($jsonObject, 'run.flash_whisper')
 	$run_options_cache['run.donate_faction_points'] = _JSON_Get($jsonObject, 'run.donate_faction_points')
 	$run_options_cache['run.buy_faction_resources'] = _JSON_Get($jsonObject, 'run.buy_faction_resources')
 	$run_options_cache['run.buy_faction_scrolls'] = _JSON_Get($jsonObject, 'run.buy_faction_scrolls')
@@ -465,8 +485,6 @@ Func WriteConfigToJson()
 	_JSON_addChangeDelete($jsonObject, 'run.use_scrolls', $run_options_cache['run.use_scrolls'])
 	_JSON_addChangeDelete($jsonObject, 'run.sort_items', $run_options_cache['run.sort_items'])
 	_JSON_addChangeDelete($jsonObject, 'run.collect_data', $run_options_cache['run.collect_data'])
-	_JSON_addChangeDelete($jsonObject, 'run.go_offline', $run_options_cache['run.go_offline'])
-	_JSON_addChangeDelete($jsonObject, 'run.flash_whisper', $run_options_cache['run.flash_whisper'])
 	_JSON_addChangeDelete($jsonObject, 'run.donate_faction_points', $run_options_cache['run.donate_faction_points'])
 	_JSON_addChangeDelete($jsonObject, 'run.buy_faction_resources', $run_options_cache['run.buy_faction_resources'])
 	_JSON_addChangeDelete($jsonObject, 'run.buy_faction_scrolls', $run_options_cache['run.buy_faction_scrolls'])
@@ -556,7 +574,6 @@ Func FillFarmMap()
 	AddFarmToFarmMap(	'Storage',						InventoryManagementBeforeRun,	5,					2 * 60 * 1000)
 	AddFarmToFarmMap(	'Tests',						RunTests,						0,					2 * 60 * 1000)
 	AddFarmToFarmMap(	'TestSuite',					RunTestSuite,					0,					5 * 60 * 1000)
-	AddFarmToFarmMap(	'DevSuite',						RunDevSuite,					0,					5 * 60 * 1000)
 	AddFarmToFarmMap(	'',								Null,							0,					2 * 60 * 1000)
 EndFunc
 
@@ -861,3 +878,25 @@ Func Authentification($characterName)
 	Return $SUCCESS
 EndFunc
 #EndRegion Authentification and Login
+
+
+Func UpdateHeartbeat()
+	WriteSlaveToMaster($slave_index, 'heartbeat', $slave_heartbeat)
+	$slave_heartbeat += 1
+
+	Info('Master hearbeat: ' & ReadMasterBroadcast('heartbeat'))
+	Local $enableGUICommand = ReadMasterToSlave($slave_index, 'enableGUI')
+	Info('Enable GUI order: ' & $enableGUICommand)
+	If Not $GUI_ENABLED And $enableGUICommand Then
+		CreateBotsHubGUI()
+		ApplyConfigToGUI()
+		FillConfigurationCombo()
+		GUISetState(@SW_SHOWNORMAL)
+		Info('GW Bot Hub ' & $GW_BOT_HUB_VERSION)
+		$GUI_ENABLED = True
+	EndIf
+	If $GUI_ENABLED And Not $enableGUICommand Then
+		GUISetState(@SW_HIDE)
+		$GUI_ENABLED = False
+	EndIf
+EndFunc

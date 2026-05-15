@@ -17,12 +17,13 @@
 
 #include-once
 
-#include '../../lib/GWA2.au3'
+#include '../../lib/GWA2_ID_Maps.au3'
+#include '../../lib/GWA2_ID_Skills.au3'
 #include '../../lib/GWA2_ID.au3'
+#include '../../lib/Utils-Agents.au3'
+#include '../../lib/Utils-Console.au3'
+#include '../../lib/Utils-Storage.au3'
 #include '../../lib/Utils.au3'
-#include <File.au3>
-
-Opt('MustDeclareVars', True)
 
 ; ==== Constants ====
 Global Const $DW_COMMENDATIONS_FARMER_SKILLBAR = 'OgGlQpVq6smsGRg19RTKexTkL2XsDC'
