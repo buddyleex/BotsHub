@@ -70,11 +70,39 @@ Func GoToVarajarFells()
 EndFunc
 
 
+Func NornBlessingHelper($x, $y)
+	;Dumb Helper
+	Info('Taking Blessing')
+	GoToNPC(GetNearestNPCToCoords($x, $y))
+	Sleep(500)
+	Dialog(0x84)
+	Sleep(500)
+	KillFoesInArea()
+	Sleep(1000)
+	GoToNPC(GetNearestNPCToCoords($x, $y))
+	Sleep(500)
+	Dialog(0x84)
+	Sleep(500)
+EndFunc
+
+
+Func HasNewEffectID($oldEffects, $newEffects)
+	If Not IsArray($newEffects) Then Return False
+	For $effectID In $newEffects
+		If Not ArrayContains($oldEffects, $effectID) Then Return True
+	Next
+	Return False
+EndFunc
+
+
 ;~ Cleaning Varajar Fells function
 Func VanquishVarajarFells()
 	If GetMapID() <> $ID_VARAJAR_FELLS Then Return $FAIL
 
 	If IsHardmodeEnabled() Then UseConset()
+	UseConsumable($ID_BIRTHDAY_CUPCAKE, True)
+	UseConsumable($ID_HONEYCOMB, True)
+	UseConsumable($ID_HONEYCOMB, True)
 
 	; 43 groups to vanquish + 6 movements
 	Local Static $foes[][] = [ _
@@ -99,7 +127,6 @@ Func VanquishVarajarFells()
 		[-14916,	2475,	'Lake',						$AGGRO_RANGE	], _
 		_ ; blessing
 		[-16051,	6492,	'Elemental',				$AGGRO_RANGE	], _
-		[-16934,	11145,	'Elemental',				$AGGRO_RANGE	], _
 		[-19378,	14555,	'Elemental',				$AGGRO_RANGE	], _
 		_ ; blessing
 		[-15932,	9386,	'',							$AGGRO_RANGE	], _
@@ -144,85 +171,63 @@ Func VanquishVarajarFells()
 	MoveTo(-3301, -2008)
 	MoveTo(-2034, -4512)
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(-2034, -4512))
-	Sleep(1000)
-	Dialog(0x84)
-	Sleep(1000)
+	NornBlessingHelper(-2034, -4512)
 
 	For $i = 0 To 5
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(-25274, -11970))
-	Sleep(1000)
+	NornBlessingHelper(-25274, -11970)
 
 	For $i = 6 To 10
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(-12071, -4274))
-	Sleep(1000)
+	NornBlessingHelper(-12071, -4274)
 
 	For $i = 11 To 15
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(-11282, 5466))
-	Sleep(1000)
+	NornBlessingHelper(-11282, 5466)
 
-	For $i = 16 To 18
+	For $i = 16 To 17
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(-22751, 14163))
-	Sleep(1000)
+	NornBlessingHelper(-22751, 14163)
 
-	For $i = 19 To 21
+	For $i = 18 To 20
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(-2290, 14879))
-	Sleep(1000)
+	NornBlessingHelper(-2290, 14879)
 
-	For $i = 22 To 32
+	For $i = 21 To 31
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(24522, -6532))
-	Sleep(1000)
+	NornBlessingHelper(24522, -6532)
 
-	For $i = 33 To 39
+	For $i = 32 To 38
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(8963, 4043))
-	Sleep(1000)
+	NornBlessingHelper(8963, 4043)
 
-	For $i = 40 To 41
+	For $i = 39 To 40
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(22961, 12757))
-	Sleep(1000)
+	NornBlessingHelper(22961, 12757)
 
-	For $i = 42 To 43
+	For $i = 41 To 42
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 
-	Info('Taking Blessing')
-	GoToNPC(GetNearestNPCToCoords(13714, 14520))
-	Sleep(1000)
+	NornBlessingHelper(13714, 14520)
 
-	For $i = 44 To 48
+	For $i = 43 To 47
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
 	Next
 

@@ -1563,7 +1563,7 @@ EndFunc
 
 #Region Loot items
 ;~ Loot items around character
-Func PickUpItems($defendFunction = Null, $shouldPickItem = DefaultShouldPickItem, $range = $RANGE_COMPASS)
+Func PickUpItems($defendFunction = Null, $shouldPickItem = DefaultShouldPickItem, $range = $RANGE_COMPASS, $debug = False)
 	If $inventory_management_cache['@pickup.nothing'] Then Return
 
 	Local $item
@@ -1571,22 +1571,44 @@ Func PickUpItems($defendFunction = Null, $shouldPickItem = DefaultShouldPickItem
 	Local $deadlock
 	Local $agents = GetAgentArray($ID_AGENT_TYPE_ITEM)
 	Local $me = GetMyAgent()
+
+	If $debug Then Info('[PickUpItems] Agent array size: ' & UBound($agents))
+
 	For $agent In $agents
 		If IsPlayerDead() Then Return
-		If Not GetCanPickUp($agent) Then ContinueLoop
-		If GetDistance($me, $agent) > $range Then ContinueLoop
 
 		$agentID = DllStructGetData($agent, 'ID')
-		$item = GetItemByAgentID($agentID)
+		Local $canPickUp = GetCanPickUp($agent)
+		Local $dist = GetDistance($me, $agent)
 
-		If ($shouldPickItem($item)) Then
+		If Not $canPickUp Then
+			If $debug Then Info('[PickUpItems] AgentID=' & $agentID & ' SKIP: not assignable (Owner=' & DllStructGetData($agent, 'Owner') & ')')
+			ContinueLoop
+		EndIf
+		If $dist > $range Then
+			If $debug Then Info('[PickUpItems] AgentID=' & $agentID & ' SKIP: out of range (dist=' & Round($dist) & ')')
+			ContinueLoop
+		EndIf
+
+		$item = GetItemByAgentID($agentID)
+		Local $modelID = DllStructGetData($item, 'ModelID')
+		Local $qty = DllStructGetData($item, 'Quantity')
+		Local $shouldPick = $shouldPickItem($item)
+
+		If $shouldPick Then
+			If $debug Then Info('[PickUpItems] AgentID=' & $agentID & ' ModelID=' & $modelID & ' Qty=' & $qty & ' -> PICKING UP')
 			If $defendFunction <> Null Then $defendFunction()
-			If Not GetAgentExists($agentID) Then ContinueLoop
+			If Not GetAgentExists($agentID) Then
+				If $debug Then Info('[PickUpItems] AgentID=' & $agentID & ' SKIP: agent gone before pickup')
+				ContinueLoop
+			EndIf
 			PickUpItem($item)
 			$deadlock = TimerInit()
 			While IsPLayerAlive() And GetAgentExists($agentID) And TimerDiff($deadlock) < 10000
 				RandomSleep(100)
 			WEnd
+		Else
+			If $debug Then Info('[PickUpItems] AgentID=' & $agentID & ' ModelID=' & $modelID & ' Qty=' & $qty & ' -> skipped by filter')
 		EndIf
 	Next
 

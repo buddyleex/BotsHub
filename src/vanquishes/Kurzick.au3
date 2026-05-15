@@ -211,9 +211,12 @@ Func VanquishFerndale()
 
 	For $i = 0 To UBound($foes) - 1
 		If MoveAggroAndKillInRange($foes[$i][0], $foes[$i][1], $foes[$i][2], $foes[$i][3]) == $FAIL Then Return $FAIL
-		If GetAreaVanquished() Then Return $SUCCESS
 	Next
-
-	Error('The map has not been completely vanquished.')
-	Return $FAIL
+	If Not GetAreaVanquished() Then
+		Error('The map has not been completely vanquished.')
+		Return $FAIL
+	Else
+		Info('Map has been fully vanquished.')
+		Return $SUCCESS
+	EndIf
 EndFunc
