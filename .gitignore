@@ -8,4 +8,5 @@ conf/loot/*
 .idea/
 .*/
 !.github/
-multibox_debug.log
+.*
+!.gitignore

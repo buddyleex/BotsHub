@@ -21,6 +21,7 @@ Opt('MustDeclareVars', True)
 
 #Region Includes
 #include-once
+#include <Misc.au3>
 #include 'lib/BotsHubManager-GUI.au3'
 #include 'lib/GWA2_Assembly.au3'
 #include 'lib/Utils-Console.au3'
@@ -48,16 +49,27 @@ Global $slave_state[10]
 
 LauncherMain()
 
+Func _InitManager()
+	If Not _Singleton('BotsHubManager', 1) Then
+		MsgBox(BitOR($MB_ICONERROR, $MB_TOPMOST), 'BotsHub Manager', 'Another instance of BotsHub Manager is already running.' & @CRLF & 'Close it before opening a new one.')
+		Exit 1
+	EndIf
+	If Not FileExists(@ScriptDir & '\logs') Then DirCreate(@ScriptDir & '\logs')
+	FileDelete(@ScriptDir & '\logs\multibox_debug.log')
+	FileDelete(@ScriptDir & '\logs\scan_debug.log')
+EndFunc
+
 Func LauncherMain()
+	_InitManager()
 	Local $gui = CreateBotsHubManagerGUI()
 	CreateMasterSharedMemoryBlock()
 	CreateMultiboxAccountStateBlock()
-	CreateMultiboxEventLogBlock()
 	WriteMasterBroadcast('state', $STATE_RUNNING)
 	ScanAndUpdateGameClients()
 	SelectClient(1)
 	PopulateClientRows()
 	AdlibRegister('UpdateMasterHeartbeat', 5000)
+	KillAllOrphanedBotProcesses()
 	OnAutoItExitRegister('CloseManager')
 	While True
 		UpdateInstancesUptime()
@@ -88,14 +100,41 @@ EndFunc
 
 Func CloseManager()
 	AdlibUnregister('UpdateMasterHeartbeat')
+	For $i = 0 To $slave_count - 1
+		If ProcessExists($slave_bot_PID[$i]) Then ProcessClose($slave_bot_PID[$i])
+	Next
 	CloseSharedMemory($MASTER_BROADCAST)
 	For $i = 0 To $slave_count - 1
 		CloseSharedMemory($MASTER_TO_SLAVE & '_' & $i)
 		CloseSharedMemory($SLAVE_TO_MASTER & '_' & $i)
 		CloseSharedMemory($INBOX_BLOCK_PREFIX & $i)
 	Next
-	; Close multibox shared blocks (account state and event log handles managed by Utils-Multibox)
 	CloseMultiboxSharedMemory()
+EndFunc
+
+
+; Kill every untracked AutoIt process that launched BotsHub.au3 (crash recovery).
+Func KillAllOrphanedBotProcesses()
+	Local $processList = ProcessList(@AutoItExe)
+	If Not IsArray($processList) Or $processList[0][0] = 0 Then Return
+	For $i = 1 To $processList[0][0]
+		Local $botPID = $processList[$i][1]
+		If $botPID = @AutoItPID Then ContinueLoop
+		Local $isTracked = False
+		For $j = 0 To $slave_count - 1
+			If $slave_bot_PID[$j] = $botPID Then
+				$isTracked = True
+				ExitLoop
+			EndIf
+		Next
+		If $isTracked Then ContinueLoop
+		Local $cmdLine = _WinAPI_GetProcessCommandLine($botPID)
+		If @error Or $cmdLine = '' Then ContinueLoop
+		If StringInStr($cmdLine, 'BotsHub.au3') Then
+			Info('Killing orphaned bot process ' & $botPID)
+			ProcessClose($botPID)
+		EndIf
+	Next
 EndFunc
 
 
@@ -113,7 +152,6 @@ Func StartBotInstance($character, $farm)
 	$slave_character[$slaveIndex] = $character
 	$slave_farm[$slaveIndex] = $farm
 	$slave_game_PID[$slaveIndex] = $pid
-	CreateSlaveSharedMemoryBlock($slaveIndex)
 	CreateMultiboxInboxBlock($slaveIndex)
 
 	Local $cmd = '"' & @AutoItExe & '" "' & @ScriptDir & '\BotsHub.au3" ' & $slaveIndex  & ' ' & $pid & ' "' & $character & '" "' & $farm & '" ' & $slave_count
@@ -124,7 +162,18 @@ EndFunc
 
 
 Func StopBotInstance($slaveIndex)
-	If ProcessExists($slave_bot_PID[$slaveIndex]) Then ProcessClose($slave_bot_PID[$slaveIndex])
+	If $slaveIndex < 0 Or $slaveIndex >= $slave_count Then Return
+	If Not ProcessExists($slave_bot_PID[$slaveIndex]) Then Return
+	; Ask bot to exit gracefully so it can write the leave message to chat
+	SendMultiboxMessage($slaveIndex, $CMD_SHUTDOWN)
+	Local $deadline = TimerInit()
+	While ProcessExists($slave_bot_PID[$slaveIndex])
+		If TimerDiff($deadline) > 2000 Then
+			ProcessClose($slave_bot_PID[$slaveIndex])
+			ExitLoop
+		EndIf
+		Sleep(100)
+	WEnd
 EndFunc
 
 

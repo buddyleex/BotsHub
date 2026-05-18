@@ -5,6 +5,7 @@
 #CE ===========================================================================
 
 #include-once
+#include <WinAPIProc.au3>
 #include 'GWA2.au3'
 #include 'GWA2_Headers.au3'
 #include 'Utils-Console.au3'
@@ -534,13 +535,39 @@ EndFunc
 
 ;~ Build, inject, execute and harvest the scan results
 Func ExecutePatternScan()
-	; Locate game process
+	; gwBaseAddress: address of a known Gw.exe function — kept for the fixed-header anchor
+	; at gwBaseAddress + 0x9E4000. Do NOT replace with the PE module base here.
 	Local $gwBaseAddress = GetGameProcessBaseAddress()
 	Debug('Executing pattern scan')
 	Local $results[]
 	$asm_injection_size = 0
 	$asm_code_offset = 0
 	$asm_injection_string = ''
+
+	; Use the true Gw.exe module base + PE SizeOfImage for the scan window.
+	; GetGameProcessBaseAddress() returns a mid-module function — scanning 6 MB forward
+	; from that address misses patterns (e.g. UIMessage) that lie before it in memory.
+	Local $pHandle = GetProcessHandle()
+	Local $scanBase = GetGameProcessBaseAddressWithPE()
+	If $scanBase = 0 Then $scanBase = $gwBaseAddress
+	Local $e_lfanew = MemoryRead($pHandle, $scanBase + 0x3C, 'dword')
+	Local $scanSize = MemoryRead($pHandle, $scanBase + $e_lfanew + 0x50, 'dword')
+	If $scanSize < 0x600000 Or $scanSize > 0x2000000 Then $scanSize = 0x1000000
+	; The scan loop does `inc ecx; mov al,[ecx]` BEFORE the limit comparison.
+	; Subtracting one page keeps the last read within the mapped image.
+	$scanSize -= 0x1000
+
+	; === DIAGNOSTIC: log scan parameters to file ===
+	Local $dbgLog = @ScriptDir & '\logs\scan_debug.log'
+	Local $dbgFile = FileOpen($dbgLog, 1)
+	FileWriteLine($dbgFile, '--- ExecutePatternScan at ' & @HOUR & ':' & @MIN & ':' & @SEC & ' ---')
+	FileWriteLine($dbgFile, 'gwBaseAddress (mid-module anchor) = 0x' & Hex($gwBaseAddress, 8))
+	FileWriteLine($dbgFile, 'scanBase (PE module base)         = 0x' & Hex($scanBase, 8))
+	FileWriteLine($dbgFile, 'e_lfanew                          = 0x' & Hex($e_lfanew, 8))
+	FileWriteLine($dbgFile, 'scanSize (after -0x1000)          = 0x' & Hex($scanSize, 8))
+	FileWriteLine($dbgFile, 'scanBase == gwBaseAddress (fallback used) = ' & ($scanBase = $gwBaseAddress))
+	FileClose($dbgFile)
+	; === END DIAGNOSTIC ===
 
 	Debug('Appending patterns to ASM injection string')
 	; Building the ASM payload
@@ -549,7 +576,7 @@ Func ExecutePatternScan()
 		AppendPatternToASMInjection($scan_patterns[$i][1])
 	Next
 	Debug('Creating scan procedure')
-	AssemblerCreateScanProcedure($gwBaseAddress)
+	AssemblerCreateScanProcedure($scanBase, $scanSize)
 
 	Local $newHeader = False
 	Local $fixedHeader = $gwBaseAddress + 0x9E4000
@@ -626,6 +653,14 @@ Func ExecutePatternScan()
 		SafeDllCall5($kernel_handle, 'int', 'CloseHandle', 'int', $thread)
 	EndIf
 	FillScanResults()
+
+	; === DIAGNOSTIC: log UIMessage scan result ===
+	Local $dbgLog2 = @ScriptDir & '\logs\scan_debug.log'
+	Local $dbgFile2 = FileOpen($dbgLog2, 1)
+	FileWriteLine($dbgFile2, 'UIMessage scan_result (raw)       = 0x' & Hex($scan_results['UIMessage'], 8))
+	FileWriteLine($dbgFile2, '')
+	FileClose($dbgFile2)
+	; === END DIAGNOSTIC ===
 EndFunc
 
 
@@ -1419,7 +1454,7 @@ EndFunc
 #EndRegion Modification
 
 
-Func AssemblerCreateScanProcedure($gwBaseAddress)
+Func AssemblerCreateScanProcedure($gwBaseAddress, $scanSize = 6291456)
 	_('ScanProc:')
 	_('pushad')
 	_('mov ecx,' & Hex($gwBaseAddress, 8))
@@ -1437,7 +1472,7 @@ Func AssemblerCreateScanProcedure($gwBaseAddress)
 	_('add edx,50')
 	_('cmp edx,esi')
 	_('jnz ScanInnerLoop')
-	_('cmp ecx,' & SwapEndian(Hex($gwBaseAddress + 6291456, 8)))
+	_('cmp ecx,' & SwapEndian(Hex($gwBaseAddress + $scanSize, 8)))
 	_('jnz ScanLoop')
 	_('jmp ScanExit')
 
@@ -1453,7 +1488,7 @@ Func AssemblerCreateScanProcedure($gwBaseAddress)
 	_('add edx,50')
 	_('cmp edx,esi')
 	_('jnz ScanInnerLoop')
-	_('cmp ecx,' & SwapEndian(Hex($gwBaseAddress + 6291456, 8)))
+	_('cmp ecx,' & SwapEndian(Hex($gwBaseAddress + $scanSize, 8)))
 	_('jnz ScanLoop')
 	_('jmp ScanExit')
 
@@ -1466,7 +1501,7 @@ Func AssemblerCreateScanProcedure($gwBaseAddress)
 	_('add edx,50')
 	_('cmp edx,esi')
 	_('jnz ScanInnerLoop')
-	_('cmp ecx,' & SwapEndian(Hex($gwBaseAddress + 6291456, 8)))
+	_('cmp ecx,' & SwapEndian(Hex($gwBaseAddress + $scanSize, 8)))
 	_('jnz ScanLoop')
 	_('jmp ScanExit')
 
@@ -1477,7 +1512,7 @@ Func AssemblerCreateScanProcedure($gwBaseAddress)
 	_('add edx,50')
 	_('cmp edx,esi')
 	_('jnz ScanInnerLoop')
-	_('cmp ecx,' & SwapEndian(Hex($gwBaseAddress + 6291456, 8)))
+	_('cmp ecx,' & SwapEndian(Hex($gwBaseAddress + $scanSize, 8)))
 	_('jnz ScanLoop')
 
 	_('ScanExit:')

@@ -36,7 +36,9 @@ Global Const $DEV_SUITE_INFORMATIONS = 'Just a dev suite.'
 
 ;~ Main method from utils, used only to run dev tests
 Func RunDevSuite()
-    ;GetMyCoords()
+    GetMyCoords()
+    GetClosestFoeInfo()
+    ;GetMyCurrentMapID()
     ;DhuumSetup()
     ;DhuumStart()
 
@@ -50,7 +52,7 @@ Func RunDevSuite()
 
     ;Info('Test: ' & GetAttributeByID($ID_FAST_CASTING))
 
-    GetEffects()
+    ;GetEffects()
 
     Return $PAUSE
 EndFunc
@@ -88,6 +90,16 @@ Func GetMyCoords()
     Return $PAUSE
 EndFunc
 
+Func GetClosestFoeInfo()
+    Local $closestNPC = GetNearestNPCInRangeOfCoords(Null, Null, $ID_ALLEGIANCE_FOE)
+    Info(PrintNPCInformations($closestNPC))
+EndFunc
+
+Func GetMyCurrentMapID()
+	Local $mapID = GetMapID()
+	Info('Current Map ID: ' & $mapID)
+	Return $mapID
+EndFunc
 
 Func DhuumSetup()
     CancelAllHeroes()

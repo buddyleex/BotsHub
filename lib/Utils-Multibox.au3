@@ -20,13 +20,11 @@
 
 Global Const $MAX_MULTIBOX_SLOTS = 10
 Global Const $INBOX_MESSAGE_COUNT = 8
-Global Const $EVENT_LOG_SIZE = 32
 Global Const $STALE_THRESHOLD = 15000
 
 ; Shared memory block names
 Global Const $ACCOUNT_STATE_BLOCK = 'Local\BotsHub_AccountState'
 Global Const $INBOX_BLOCK_PREFIX = 'Local\BotsHub_Inbox_'
-Global Const $EVENT_LOG_BLOCK = 'Local\BotsHub_EventLog'
 
 ; Command type enum (for inbox messages)
 Global Const $CMD_NONE = 0
@@ -39,21 +37,27 @@ Global Const $CMD_RESURRECT = 6
 Global Const $CMD_PICK_UP_LOOT = 7
 Global Const $CMD_TRAVEL_TO_MAP = 8
 Global Const $CMD_INVITE_TO_PARTY = 9
+Global Const $CMD_INVITE_ALL_ACCOUNTS = 10
+Global Const $CMD_ACCEPT_INVITE = 11
+Global Const $CMD_TRAVEL_TO_GH = 12
+Global Const $CMD_START_FARM = 13
+Global Const $CMD_SHUTDOWN = 14
 Global Const $CMD_CUSTOM = 99
-
-; Event type enum (for event log)
-Global Const $EVT_NONE = 0
-Global Const $EVT_SKILL_CAST = 1
-Global Const $EVT_DEATH = 2
-Global Const $EVT_KILL = 3
-Global Const $EVT_RESURRECT = 4
-Global Const $EVT_LOOT = 5
-Global Const $EVT_MAP_CHANGE = 6
-Global Const $EVT_LOW_HEALTH = 7
-Global Const $EVT_PARTY_WIPE = 8
 
 ; Debug logger sender name
 Global Const $MB_DEBUG_SENDER = 'BHub'
+
+; When True, bot behavior functions write verbose status to the in-game Bhub console.
+; DO NOT enable inside ExecuteMultiboxCommand — WriteChat uses the GW command queue.
+; Safe to use in main-loop bot functions (FollowerTick, FightFunctions, etc.).
+Global $mb_verbose_log = False
+
+; Farm name received via CMD_START_FARM; BotHubLoop activates it on the next tick.
+Global $mb_pending_farm = ''
+
+; Set True by OpenMultiboxSharedMemory; BotHubLoop emits the join chat message on its first tick
+; (WriteChat crashes if called before GWA2 labels are resolved by the assembly scanner).
+Global $mb_join_msg_pending = False
 
 ; ==================== STRUCT TEMPLATES ====================
 
@@ -70,12 +74,6 @@ Global Const $INBOX_MESSAGE_TEMPLATE = _
 	'float param1;			float param2;			float param3;			float param4;' & _
 	'wchar extraData[64];	dword timestamp'
 
-Global Const $EVENT_LOG_ENTRY_TEMPLATE = _
-	'byte active;			byte slaveIndex;		dword eventType;' & _
-	'dword targetAgentID;	short skillID;			dword timestamp'
-
-Global Const $EVENT_LOG_HEADER_TEMPLATE = 'dword writeIndex'
-
 ; ==================== GLOBAL STATE ====================
 
 ; DllStruct arrays for account state slots (one struct per slot, overlaid on shared memory)
@@ -84,12 +82,6 @@ Global $mb_state_structs[$MAX_MULTIBOX_SLOTS]
 Global $mb_inbox_structs[$INBOX_MESSAGE_COUNT]
 ; Map: slaveIndex -> array of DllStructs for writing to OTHER accounts' inboxes
 Global $mb_outbox_structs[]
-; DllStruct array for event log entries
-Global $mb_event_structs[$EVENT_LOG_SIZE]
-; DllStruct for event log header (contains writeIndex)
-Global $mb_event_header_struct = Null
-; Read cursor for event log (this process's position)
-Global $mb_event_read_cursor = 0
 ; This process's slave index
 Global $mb_my_slot = -1
 ; Total known slaves
@@ -97,10 +89,9 @@ Global $mb_total_slaves = 0
 ; Handle tracking for cleanup
 Global $mb_account_state_handle = 0
 Global $mb_account_state_base = 0
-Global $mb_event_log_handle = 0
-Global $mb_event_log_base = 0
 Global $mb_inbox_handles[]
 Global $mb_inbox_bases[]
+Global $mb_failed_outbox_slots[] ; Track slots we failed to open so we can retry
 
 
 ; ==================== CREATION (Master calls these) ====================
@@ -196,52 +187,6 @@ Func CreateMultiboxInboxBlock($slaveIndex)
 EndFunc
 
 
-Func CreateMultiboxEventLogBlock()
-	Local $headerSize = DllStructGetSize(DllStructCreate($EVENT_LOG_HEADER_TEMPLATE))
-	Local $entrySize = DllStructGetSize(DllStructCreate($EVENT_LOG_ENTRY_TEMPLATE))
-	Local $totalSize = $headerSize + ($entrySize * $EVENT_LOG_SIZE)
-
-	Local $handle = SafeDllCall15($kernel_handle, 'handle', 'CreateFileMappingW', _
-		'handle', -1, _
-		'ptr', 0, _
-		'dword', $PAGE_READWRITE, _
-		'dword', 0, _
-		'dword', $totalSize, _
-		'wstr', $EVENT_LOG_BLOCK)
-	If @error Or $handle[0] = 0 Then
-		Error('Failed to create event log shared memory block.')
-		Return False
-	EndIf
-	$mb_event_log_handle = $handle[0]
-
-	Local $address = SafeDllCall13($kernel_handle, 'ptr', 'MapViewOfFile', _
-		'handle', $handle[0], _
-		'dword', BitOR($FILE_MAP_READ, $FILE_MAP_WRITE), _
-		'dword', 0, _
-		'dword', 0, _
-		'dword', $totalSize)
-	If @error Or $address[0] = 0 Then
-		SafeDllCall5($kernel_handle, 'int', 'CloseHandle', 'int', $handle[0])
-		Error('Failed to map event log shared memory.')
-		Return False
-	EndIf
-	$mb_event_log_base = $address[0]
-
-	; Header at the start
-	$mb_event_header_struct = DllStructCreate($EVENT_LOG_HEADER_TEMPLATE, $address[0])
-	DllStructSetData($mb_event_header_struct, 'writeIndex', 0)
-
-	; Event entries after the header
-	For $i = 0 To $EVENT_LOG_SIZE - 1
-		$mb_event_structs[$i] = DllStructCreate($EVENT_LOG_ENTRY_TEMPLATE, $address[0] + $headerSize + ($i * $entrySize))
-		DllStructSetData($mb_event_structs[$i], 'active', 0)
-	Next
-
-	Info('Created multibox event log block (' & $totalSize & ' bytes, ' & $EVENT_LOG_SIZE & ' entries)')
-	Return True
-EndFunc
-
-
 ; ==================== OPENING (Slave calls this) ====================
 
 Func OpenMultiboxSharedMemory($slaveIndex, $totalSlaves)
@@ -310,12 +255,20 @@ Func OpenMultiboxSharedMemory($slaveIndex, $totalSlaves)
 	EndIf
 	$mb_inbox_bases[$myInboxName] = $address[0]
 
+	Local $staleCount = 0
 	For $i = 0 To $INBOX_MESSAGE_COUNT - 1
 		$mb_inbox_structs[$i] = DllStructCreate($INBOX_MESSAGE_TEMPLATE, $address[0] + ($i * $msgSize))
-		; Clear any stale messages from previous sessions
+		If DllStructGetData($mb_inbox_structs[$i], 'active') <> 0 Then
+			_MBFileLog('WARNING: stale inbox message at slot ' & $i & ' cmd=' & DllStructGetData($mb_inbox_structs[$i], 'cmd') & ' — clearing')
+			$staleCount += 1
+		EndIf
 		DllStructSetData($mb_inbox_structs[$i], 'active', 0)
 	Next
-	_MBFileLog('Cleared own inbox (' & $INBOX_MESSAGE_COUNT & ' slots zeroed)')
+	If $staleCount > 0 Then
+		_MBFileLog('Cleared own inbox (' & $INBOX_MESSAGE_COUNT & ' slots zeroed, ' & $staleCount & ' stale found)')
+	Else
+		_MBFileLog('Cleared own inbox (' & $INBOX_MESSAGE_COUNT & ' slots zeroed)')
+	EndIf
 
 	; --- Open Other Accounts' Inboxes (for sending messages to them) ---
 	For $s = 0 To $totalSlaves - 1
@@ -353,44 +306,9 @@ Func OpenMultiboxSharedMemory($slaveIndex, $totalSlaves)
 		$mb_outbox_structs[$s] = $outboxStructs
 	Next
 
-	; --- Open Event Log Block ---
-	Local $headerSize = DllStructGetSize(DllStructCreate($EVENT_LOG_HEADER_TEMPLATE))
-	Local $entrySize = DllStructGetSize(DllStructCreate($EVENT_LOG_ENTRY_TEMPLATE))
-	Local $eventLogSize = $headerSize + ($entrySize * $EVENT_LOG_SIZE)
-
-	$handle = SafeDllCall9($kernel_handle, 'handle', 'OpenFileMappingW', _
-		'dword', BitOR($FILE_MAP_READ, $FILE_MAP_WRITE), _
-		'bool', False, _
-		'wstr', $EVENT_LOG_BLOCK)
-	If @error Or $handle[0] = 0 Then
-		_MBFileLog('FAIL: open event log block')
-		Error('Failed to open event log shared memory block.')
-		Return False
-	EndIf
-	$mb_event_log_handle = $handle[0]
-
-	$address = SafeDllCall13($kernel_handle, 'ptr', 'MapViewOfFile', _
-		'handle', $handle[0], _
-		'dword', BitOR($FILE_MAP_READ, $FILE_MAP_WRITE), _
-		'dword', 0, _
-		'dword', 0, _
-		'dword', $eventLogSize)
-	If @error Or $address[0] = 0 Then
-		SafeDllCall5($kernel_handle, 'int', 'CloseHandle', 'int', $handle[0])
-		Error('Failed to map event log shared memory.')
-		Return False
-	EndIf
-	$mb_event_log_base = $address[0]
-
-	$mb_event_header_struct = DllStructCreate($EVENT_LOG_HEADER_TEMPLATE, $address[0])
-	For $i = 0 To $EVENT_LOG_SIZE - 1
-		$mb_event_structs[$i] = DllStructCreate($EVENT_LOG_ENTRY_TEMPLATE, $address[0] + $headerSize + ($i * $entrySize))
-	Next
-	; Start reading from the current position
-	$mb_event_read_cursor = DllStructGetData($mb_event_header_struct, 'writeIndex')
-
 	_MBFileLog('SUCCESS: Opened all multibox shared memory for slot ' & $slaveIndex)
-	Info('Opened multibox shared memory for slot ' & $slaveIndex & ' (total slaves: ' & $totalSlaves & ')')
+	WriteChat('Slot ' & $slaveIndex & ' joined SHM (' & $totalSlaves & ' total)', 'Bhub', 6)
+	SetEmoteLog('EmoteLog')
 	Return True
 EndFunc
 
@@ -534,13 +452,53 @@ Func GetDistanceToAccount($slaveIndex)
 EndFunc
 
 
+
 ; ==================== MESSAGING ====================
+
+; Try to open an outbox connection to a slot that failed initially (on-demand retry)
+Func _RetryOpenOutboxForSlot($slotIndex)
+	Local $msgSize = DllStructGetSize(DllStructCreate($INBOX_MESSAGE_TEMPLATE))
+	Local $inboxSize = $msgSize * $INBOX_MESSAGE_COUNT
+	Local $otherInboxName = $INBOX_BLOCK_PREFIX & $slotIndex
+
+	Local $handle = SafeDllCall9($kernel_handle, 'handle', 'OpenFileMappingW', _
+		'dword', $FILE_MAP_WRITE, _
+		'bool', False, _
+		'wstr', $otherInboxName)
+	If @error Or $handle[0] = 0 Then
+		Return False
+	EndIf
+	$mb_inbox_handles[$otherInboxName] = $handle[0]
+
+	Local $address = SafeDllCall13($kernel_handle, 'ptr', 'MapViewOfFile', _
+		'handle', $handle[0], _
+		'dword', $FILE_MAP_WRITE, _
+		'dword', 0, _
+		'dword', 0, _
+		'dword', $inboxSize)
+	If @error Or $address[0] = 0 Then
+		SafeDllCall5($kernel_handle, 'int', 'CloseHandle', 'int', $handle[0])
+		Return False
+	EndIf
+	$mb_inbox_bases[$otherInboxName] = $address[0]
+
+	Local $outboxStructs[$INBOX_MESSAGE_COUNT]
+	For $i = 0 To $INBOX_MESSAGE_COUNT - 1
+		$outboxStructs[$i] = DllStructCreate($INBOX_MESSAGE_TEMPLATE, $address[0] + ($i * $msgSize))
+	Next
+	$mb_outbox_structs[$slotIndex] = $outboxStructs
+	_MBFileLog('_RetryOpenOutboxForSlot: successfully opened outbox for slot ' & $slotIndex)
+	Return True
+EndFunc
 
 Func SendMultiboxMessage($targetSlaveIndex, $command, $param1 = 0, $param2 = 0, $param3 = 0, $param4 = 0, $extraData = '')
 	If $mb_my_slot >= 0 And $targetSlaveIndex = $mb_my_slot Then Return False
 	If Not MapExists($mb_outbox_structs, $targetSlaveIndex) Then
-		Warn('No outbox connection to slave ' & $targetSlaveIndex)
-		Return False
+		; Try to open the outbox for this slot (it may have been created after we started)
+		If Not _RetryOpenOutboxForSlot($targetSlaveIndex) Then
+			Warn('No outbox connection to slave ' & $targetSlaveIndex)
+			Return False
+		EndIf
 	EndIf
 
 	Local $outbox = $mb_outbox_structs[$targetSlaveIndex]
@@ -640,80 +598,16 @@ EndFunc
 
 ; ==================== EVENT LOG ====================
 
-Func BroadcastEvent($eventType, $targetAgentID = 0, $skillID = 0)
-	If $mb_event_header_struct = Null Then Return
-
-	; Read current write position, write entry, increment
-	Local $writeIdx = DllStructGetData($mb_event_header_struct, 'writeIndex')
-	Local $entryIdx = Mod($writeIdx, $EVENT_LOG_SIZE)
-
-	DllStructSetData($mb_event_structs[$entryIdx], 'slaveIndex', $mb_my_slot)
-	DllStructSetData($mb_event_structs[$entryIdx], 'eventType', $eventType)
-	DllStructSetData($mb_event_structs[$entryIdx], 'targetAgentID', $targetAgentID)
-	DllStructSetData($mb_event_structs[$entryIdx], 'skillID', $skillID)
-
-	Local $tick = DllCall('kernel32.dll', 'dword', 'GetTickCount')
-	If Not @error Then DllStructSetData($mb_event_structs[$entryIdx], 'timestamp', $tick[0])
-
-	; Set active last
-	DllStructSetData($mb_event_structs[$entryIdx], 'active', 1)
-
-	; Increment shared write index
-	DllStructSetData($mb_event_header_struct, 'writeIndex', $writeIdx + 1)
-
-	MBDebug('Event: type=' & $eventType & ' target=' & $targetAgentID & ' skill=' & $skillID)
-EndFunc
-
-
-Func ReadNewEvents()
-	If $mb_event_header_struct = Null Then
-		Local $empty[0]
-		Return $empty
-	EndIf
-
-	Local $writeIdx = DllStructGetData($mb_event_header_struct, 'writeIndex')
-	Local $events[0]
-
-	While $mb_event_read_cursor < $writeIdx
-		Local $entryIdx = Mod($mb_event_read_cursor, $EVENT_LOG_SIZE)
-
-		If DllStructGetData($mb_event_structs[$entryIdx], 'active') = 1 Then
-			Local $evt[]
-			$evt['slaveIndex'] = DllStructGetData($mb_event_structs[$entryIdx], 'slaveIndex')
-			$evt['eventType'] = DllStructGetData($mb_event_structs[$entryIdx], 'eventType')
-			$evt['targetAgentID'] = DllStructGetData($mb_event_structs[$entryIdx], 'targetAgentID')
-			$evt['skillID'] = DllStructGetData($mb_event_structs[$entryIdx], 'skillID')
-			$evt['timestamp'] = DllStructGetData($mb_event_structs[$entryIdx], 'timestamp')
-
-			ReDim $events[UBound($events) + 1]
-			$events[UBound($events) - 1] = $evt
-		EndIf
-
-		$mb_event_read_cursor += 1
-	WEnd
-
-	Return $events
-EndFunc
-
-
-Func ReadEventsByType($eventType)
-	Local $allEvents = ReadNewEvents()
-	Local $filtered[0]
-	For $i = 0 To UBound($allEvents) - 1
-		If $allEvents[$i]['eventType'] = $eventType Then
-			ReDim $filtered[UBound($filtered) + 1]
-			$filtered[UBound($filtered) - 1] = $allEvents[$i]
-		EndIf
-	Next
-	Return $filtered
-EndFunc
-
 
 ; ==================== DEBUG LOGGER ====================
 
+Func EmoteLog($text, $level = $LVL_INFO)
+	If $level < $LVL_INFO Then Return
+	WriteChat(StringLeft($text, 100), $MB_DEBUG_SENDER, 6)
+EndFunc
+
 Func MultiboxLog($message, $level = 'INF')
 	Local $formatted = '[' & $MB_DEBUG_SENDER & ':' & $level & '] ' & $message
-	WriteChat($formatted, $MB_DEBUG_SENDER)
 	Switch $level
 		Case 'DBG'
 			Debug($formatted)
@@ -742,6 +636,12 @@ Func MBError($msg)
 	MultiboxLog($msg, 'ERR')
 EndFunc
 
+; Write to in-game Bhub console only when $mb_verbose_log = True.
+; ONLY call from main-loop context (FollowerTick, FightFunctions, etc.), never from ExecuteMultiboxCommand.
+Func MBChatLog($msg)
+	If $mb_verbose_log Then WriteChat(StringLeft($msg, 100), $MB_DEBUG_SENDER, 6)
+EndFunc
+
 
 ; ==================== CLEANUP ====================
 
@@ -761,16 +661,6 @@ Func CloseMultiboxSharedMemory()
 		$mb_account_state_handle = 0
 	EndIf
 
-	; Unmap and close event log block
-	If $mb_event_log_base <> 0 Then
-		SafeDllCall5($kernel_handle, 'bool', 'UnmapViewOfFile', 'ptr', $mb_event_log_base)
-		$mb_event_log_base = 0
-	EndIf
-	If $mb_event_log_handle <> 0 Then
-		SafeDllCall5($kernel_handle, 'bool', 'CloseHandle', 'handle', $mb_event_log_handle)
-		$mb_event_log_handle = 0
-	EndIf
-
 	; Close all inbox mappings
 	For $key In MapKeys($mb_inbox_bases)
 		SafeDllCall5($kernel_handle, 'bool', 'UnmapViewOfFile', 'ptr', $mb_inbox_bases[$key])
@@ -786,7 +676,7 @@ EndFunc
 ; ==================== DIAGNOSTIC FILE LOG ====================
 
 Func _MBFileLog($text)
-	Local $logFile = @ScriptDir & '\multibox_debug.log'
+	Local $logFile = @ScriptDir & '\logs\multibox_debug.log'
 	Local $hFile = FileOpen($logFile, 1) ; append mode
 	If $hFile <> -1 Then
 		FileWriteLine($hFile, @YEAR & '-' & @MON & '-' & @MDAY & ' ' & @HOUR & ':' & @MIN & ':' & @SEC & ' [slot ' & $mb_my_slot & '] ' & $text)
@@ -821,23 +711,31 @@ EndFunc
 
 ; Call this from the main bot loop (NOT from AdlibRegister)
 Func ProcessDeferredCommands()
-	If $mb_deferred_count = 0 Then Return
+	While $mb_deferred_count > 0
+		; Dequeue from the front before executing so any commands queued during
+		; Sleep() inside a command handler land safely at the end of the queue.
+		Local $nextMsg = $mb_deferred_commands[0]
+		For $i = 0 To $mb_deferred_count - 2
+			$mb_deferred_commands[$i] = $mb_deferred_commands[$i + 1]
+		Next
+		$mb_deferred_count -= 1
+		$mb_deferred_commands[$mb_deferred_count] = Null
 
-	_MBFileLog('ProcessDeferredCommands: executing ' & $mb_deferred_count & ' command(s)')
-
-	Local $count = $mb_deferred_count
-	; Reset count first so new commands arriving during execution go to the queue
-	$mb_deferred_count = 0
-	For $i = 0 To $count - 1
-		ExecuteMultiboxCommand($mb_deferred_commands[$i])
-		$mb_deferred_commands[$i] = Null
-	Next
+		If $nextMsg <> Null Then
+			_MBFileLog('ProcessDeferredCommands: executing queued command')
+			ExecuteMultiboxCommand($nextMsg)
+		EndIf
+	WEnd
 EndFunc
 
 
 ; Re-read the game's queue counter to keep the local copy in sync
 Func SyncQueueCounter()
 	Local $gameCounter = MemoryRead(GetProcessHandle(), GetLabel('QueueCounter'))
+	If @error Then
+		_MBFileLog('SyncQueueCounter: MemoryRead failed (@error=' & @error & '), keeping local=' & $queue_counter)
+		Return
+	EndIf
 	If $queue_counter <> $gameCounter Then
 		_MBFileLog('SyncQueueCounter: RESYNC local=' & $queue_counter & ' -> game=' & $gameCounter)
 		$queue_counter = $gameCounter
@@ -872,12 +770,16 @@ Func ExecuteMultiboxCommand($msg)
 
 	Switch $cmd
 		Case $CMD_FOLLOW_LEADER
-			Local $senderState = ReadAccountState($sender)
-			If $senderState <> Null Then
-				_MBFileLog('Following slave ' & $sender & ' (' & $senderState['characterName'] & ')')
-				Info('Following slave ' & $sender & ' (' & $senderState['characterName'] & ')')
+			; Leader is always slot 0 — sender may be Manager (255), not a position source
+			Local $leaderState = ReadAccountState(0)
+			If $leaderState <> Null Then
+				_MBFileLog('Following leader slot 0 (' & $leaderState['characterName'] & ')')
+				Info('Following leader: ' & $leaderState['characterName'])
 				SyncQueueCounter()
-				Move($senderState['posX'], $senderState['posY'])
+				Move($leaderState['posX'], $leaderState['posY'])
+			Else
+				_MBFileLog('CMD_FOLLOW_LEADER: slot 0 not active or stale')
+				Info('Follow failed: leader (slot 0) not in shared memory')
 			EndIf
 
 		Case $CMD_ATTACK_TARGET
@@ -925,21 +827,138 @@ Func ExecuteMultiboxCommand($msg)
 			SyncQueueCounter()
 			TravelToOutpost($mapID)
 
+		Case $CMD_TRAVEL_TO_GH
+			Local $currentMapID = GetMapID()
+			If _ArraySearch($GUILDHALL_MAP_IDS, $currentMapID) = -1 Then
+				_MBFileLog('Traveling to guild hall (from slave ' & $sender & ')')
+				Info('Traveling to guild hall')
+				SyncQueueCounter()
+				TravelGuildHall()
+			Else
+				_MBFileLog('Already in guild hall (map ' & $currentMapID & '), skipping travel')
+				Info('Already in guild hall, skipping travel')
+			EndIf
+
 		Case $CMD_RESURRECT
 			_MBFileLog('Resurrect command from slave ' & $sender)
 			Info('Resurrect command from slave ' & $sender)
+			; No functions setup for this CMD yet
 
 		Case $CMD_PICK_UP_LOOT
 			_MBFileLog('Loot command from slave ' & $sender)
 			Info('Loot command from slave ' & $sender)
+			PickUpItems()
 
 		Case $CMD_INVITE_TO_PARTY
 			_MBFileLog('Party invite command from slave ' & $sender)
 			Info('Party invite command from slave ' & $sender)
+			; No functions setup for this CMD yet
+
+		Case $CMD_INVITE_ALL_ACCOUNTS
+			_MBFileLog('InviteAllAccounts: starting party formation')
+			Info('Forming party: inviting all active accounts')
+			; If already in a multi-player party, leave first to reset state
+			If GetPartySize() > 1 Then
+				_MBFileLog('InviteAllAccounts: already in party (size=' & GetPartySize() & '), leaving first')
+				SyncQueueCounter()
+				LeaveParty(False)
+				Sleep(500)
+			EndIf
+			SyncQueueCounter()
+
+			; Read leader party ID from party_obj[0x0]
+			Local $invPH = GetProcessHandle()
+			Local $invCtxOff[] = [0, 0x18, 0x4C]
+			Local $invCtxResult = MemoryReadPtr($invPH, $base_address_ptr, $invCtxOff)
+			Local $leaderPartyID = 0
+			If Not @error And $invCtxResult[1] <> 0 Then
+				Local $party_ctx = $invCtxResult[1]
+				Local $party_obj = MemoryRead($invPH, $party_ctx + 0x54)
+				If $party_obj <> 0 Then
+					$leaderPartyID = MemoryRead($invPH, $party_obj + 0x0)
+				EndIf
+			EndIf
+			_MBFileLog('InviteAllAccounts: leader party ID = ' & $leaderPartyID)
+			If $leaderPartyID = 0 Then
+				_MBFileLog('InviteAllAccounts: ERROR - party ID is 0, aborting')
+				Info('ERROR: Could not read leader party ID')
+				Return
+			EndIf
+
+			; Phase 1: send ALL invites before any accepts — GW1 silently rejects new invites
+			; once an earlier accept completes and changes party state on the server.
+			Local $pendingSlots[$MAX_MULTIBOX_SLOTS]
+			Local $pendingCount = 0
+			For $invSlot = 0 To $MAX_MULTIBOX_SLOTS - 1
+				If $invSlot = $mb_my_slot Then ContinueLoop
+				Local $invPeer = ReadAccountState($invSlot)
+				If $invPeer = Null Or $invPeer['active'] = 0 Then ContinueLoop
+				Local $invName = $invPeer['characterName']
+				If $invName = '' Then ContinueLoop
+				Local $invAgentID = $invPeer['agentID']
+				If $invAgentID = 0 Then
+					_MBFileLog('InviteAllAccounts: WARNING - agent ID 0 for slot ' & $invSlot & ', skipping')
+					ContinueLoop
+				EndIf
+				Local $invAgent = GetAgentByID($invAgentID)
+				Local $invPlayerNum = DllStructGetData($invAgent, 'LoginNumber')
+				_MBFileLog('InviteAllAccounts: inviting ' & $invName & ' (slot ' & $invSlot & ') playerNum=' & $invPlayerNum)
+				SendPacket(0x8, $HEADER_PARTY_INVITE_PLAYER, $invPlayerNum)
+				$pendingSlots[$pendingCount] = $invSlot
+				$pendingCount += 1
+				Sleep(250)
+			Next
+
+			; Phase 2: wait for GW server to deliver all invites to clients before any accept
+			; GW1 party invites route through the server; 1000ms gives enough margin
+			_MBFileLog('InviteAllAccounts: ' & $pendingCount & ' invites sent, waiting for server delivery')
+			Sleep(500)
+
+			; Phase 3: signal all accepts
+			For $i = 0 To $pendingCount - 1
+				_MBFileLog('InviteAllAccounts: signalling accept to slot ' & $pendingSlots[$i] & ' with party ID ' & $leaderPartyID)
+				SendMultiboxMessage($pendingSlots[$i], $CMD_ACCEPT_INVITE, $leaderPartyID)
+				Sleep(250)
+			Next
+			_MBFileLog('InviteAllAccounts: all accept signals dispatched')
+			Info('Party invites sent to all active accounts')
+
+		Case $CMD_ACCEPT_INVITE
+			Local $partyID = Int($msg['param1'])
+			_MBFileLog('CMD_ACCEPT_INVITE: party ID ' & $partyID & ' from leader slot ' & $sender)
+			Info('Auto-accepting party invite (ID ' & $partyID & ')')
+			; Retry up to 3 times — GW server may not have delivered the invite to this client yet.
+			; SyncQueueCounter must immediately precede SendPacket; sleeping between them risks counter desync.
+			For $acAttempt = 1 To 3
+				SyncQueueCounter()
+				_MBFileLog('CMD_ACCEPT_INVITE: attempt ' & $acAttempt & ' sending accept for party ' & $partyID)
+				SendPacket(0x8, $HEADER_PARTY_ACCEPT_INVITE, $partyID)
+				_MBFileLog('CMD_ACCEPT_INVITE: accept packet queued (attempt ' & $acAttempt & ')')
+				Sleep(1000)
+				If GetPartySize() > 1 Then
+					_MBFileLog('CMD_ACCEPT_INVITE: joined party successfully')
+					ExitLoop
+				EndIf
+				If $acAttempt < 3 Then _MBFileLog('CMD_ACCEPT_INVITE: not in party, retrying...')
+			Next
+
+		Case $CMD_SHUTDOWN
+			_MBFileLog('CMD_SHUTDOWN: leaving SHM gracefully')
+			SyncQueueCounter()
+			WriteChat('Slot ' & $mb_my_slot & ' leaving SHM', 'Bhub', 6)
+			Sleep(150)
+			Exit
+
+		Case $CMD_START_FARM
+			Local $farmName = $msg['extraData']
+			_MBFileLog('CMD_START_FARM: farm=' & $farmName & ' from slave ' & $sender)
+			Info('Activating farm: ' & $farmName)
+			$mb_pending_farm = $farmName
 
 		Case $CMD_CUSTOM
 			_MBFileLog('Custom command from slave ' & $sender & ': ' & $msg['extraData'])
 			Info('Custom command from slave ' & $sender & ': ' & $msg['extraData'])
+			; No functions setup for this CMD yet
 
 		Case Else
 			_MBFileLog('Unknown multibox command: ' & $cmd & ' from slave ' & $sender)
@@ -951,5 +970,7 @@ EndFunc
 Func CleanupMultibox()
 	AdlibUnRegister('PublishAccountState')
 	AdlibUnRegister('ProcessInboxMessages')
+	SyncQueueCounter()
+	WriteChat('Slot ' & $mb_my_slot & ' leaving SHM', 'Bhub', 6)
 	CloseMultiboxSharedMemory()
 EndFunc

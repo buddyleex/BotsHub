@@ -162,8 +162,8 @@ BotsHubMain()
 ;------------------------------------------------------
 Func BotsHubMain()
 	; Verify validity
-	If @AutoItVersion < '3.3.16.0' Then
-		MsgBox(16, 'Error', 'This bot requires AutoIt version 3.3.16.0 or higher. You are using ' & @AutoItVersion & '.')
+	If @AutoItVersion < '3.3.16.1' Then
+		MsgBox(16, 'Error', 'This bot requires AutoIt version 3.3.16.1 or higher. You are using ' & @AutoItVersion & '.')
 		Exit 1
 	EndIf
 	If @AutoItX64 Then
@@ -215,7 +215,7 @@ Func BotsHubMain()
 			EndIf
 		EndIf
 		; Authentication
-		Authentification($character_name)
+		If Authentification($character_name) = $FAIL Then Exit
 		If $run_options_cache['run.go_offline'] Then SetPlayerStatus(0)
 		If $run_options_cache['run.flash_whisper'] Then EnableWhisperFlash()
 		$runtime_status = 'RUNNING'
@@ -226,8 +226,8 @@ Func BotsHubMain()
 		; Open multibox shared memory for cross-account coordination
 		Local $totalSlaves = ($cmdLine[0] >= 5) ? Int($cmdLine[5]) : 1
 		If Not OpenMultiboxSharedMemory($slave_index, $totalSlaves) Then Warn('Unable to open multibox shared memory blocks.')
-		AdlibRegister('PublishAccountState', 500)
-		AdlibRegister('ProcessInboxMessages', 1000)
+		AdlibRegister('PublishAccountState', 150)
+		AdlibRegister('ProcessInboxMessages', 200)
 		OnAutoItExitRegister('CleanupMultibox')
 	Else
 		MsgBox(0, 'Error', 'Unknown run mode: ' & $run_mode)
@@ -242,18 +242,41 @@ EndFunc
 ;~ Main loop of the program
 Func BotHubLoop()
 	While True
-		If ($runtime_status == 'RUNNING') Then
-			If $run_mode == 'GUI' Then
-				DisableGUIComboboxes()
-				If $farm_name == Null Or $farm_name == '' Then
-					Error('This farm does not exist.')
-					$runtime_status = 'INITIALIZED'
-					EnableStartButton()
-					Return $PAUSE
-				EndIf
+		; Activate WriteChat routing and emit join message once GWA2 labels are resolved.
+		; GetLabel('CommandUIMsg') returns "" until ModifyMemory() successfully completes its
+		; pattern scan + injection — which can fail on a freshly started GW that isn't fully
+		; initialized yet. We poll each tick (500ms) until the label is a valid non-zero address.
+		If $mb_join_msg_pending Then
+			Local $cmdLabel = GetLabel('CommandUIMsg')
+			If $cmdLabel <> 0 And $cmdLabel <> '' And $cmdLabel <> -1 Then
+				SetEmoteLog('EmoteLog')
+				$mb_join_msg_pending = False
+				Info('Slot ' & $mb_my_slot & ' joined SHM (' & $mb_total_slaves & ' total)')
 			EndIf
-			Local $result = RunFarmLoop()
-			If ($result == $PAUSE Or $run_options_cache['run.loop_mode'] == False) Then $runtime_status = 'WILL_PAUSE'
+		EndIf
+
+		; CMD_START_FARM sets $mb_pending_farm; activate it here (main loop context)
+		If $mb_pending_farm <> '' Then
+			$farm_name = $mb_pending_farm
+			$mb_pending_farm = ''
+			$runtime_status = 'RUNNING'
+		EndIf
+
+		If ($runtime_status == 'RUNNING') Then
+			; Idle mode: SHM connected but no farm assigned yet — skip RunFarmLoop
+			If $farm_name <> 'NONE' Then
+				If $run_mode == 'GUI' Then
+					DisableGUIComboboxes()
+					If $farm_name == Null Or $farm_name == '' Then
+						Error('This farm does not exist.')
+						$runtime_status = 'INITIALIZED'
+						EnableStartButton()
+						Return $PAUSE
+					EndIf
+				EndIf
+				Local $result = RunFarmLoop()
+				If ($result == $PAUSE Or $run_options_cache['run.loop_mode'] == False) Then $runtime_status = 'WILL_PAUSE'
+			EndIf
 		EndIf
 
 		If ($runtime_status == 'WILL_PAUSE') Then
@@ -269,7 +292,7 @@ Func BotHubLoop()
 		; (game queue writes only work reliably from here, not from AdlibRegister)
 		ProcessDeferredCommands()
 
-		Sleep(1000)
+		Sleep(500)
 	WEnd
 EndFunc
 
@@ -861,7 +884,7 @@ Func Authentification($characterName)
 		Warn('Running without authentification.')
 	ElseIf $run_mode == 'HEADLESS' Then
 		Info('Running via PID ' & $process_id)
-		If InitializeGameClientForGWA2(True) = 0 Then
+		If InitializeGameClientForGWA2() = 0 Then
 			MsgBox(0, 'Error', 'Could not find a ProcessID or somewhat <<' & $process_id & '>> ' & VarGetType($process_id) & '')
 			Return $FAIL
 		EndIf
@@ -873,7 +896,7 @@ Func Authentification($characterName)
 		Else
 			SelectClient($clientIndex)
 			OpenDebugLogFile()
-			If InitializeGameClientForGWA2(True) = 0 Then
+			If InitializeGameClientForGWA2() = 0 Then
 				MsgBox(0, 'Error', 'Failed game initialisation')
 				Return $FAIL
 			EndIf
@@ -882,6 +905,7 @@ Func Authentification($characterName)
 	EndIf
 	Return $SUCCESS
 EndFunc
+
 #EndRegion Authentification and Login
 
 
@@ -889,9 +913,7 @@ Func UpdateHeartbeat()
 	WriteSlaveToMaster($slave_index, 'heartbeat', $slave_heartbeat)
 	$slave_heartbeat += 1
 
-	Info('Master hearbeat: ' & ReadMasterBroadcast('heartbeat'))
 	Local $enableGUICommand = ReadMasterToSlave($slave_index, 'enableGUI')
-	Info('Enable GUI order: ' & $enableGUICommand)
 	If Not $GUI_ENABLED And $enableGUICommand Then
 		CreateBotsHubGUI()
 		ApplyConfigToGUI()

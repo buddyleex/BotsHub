@@ -24,10 +24,15 @@ Global Const $LVL_WARNING = 3
 Global Const $LVL_ERROR = 4
 
 Global $log_console
+Global $log_emote_func = ''
 Global $log_level = $LVL_INFO
 
 Func SetConsole($consoleHandle)
 	$log_console = $consoleHandle
+EndFunc
+
+Func SetEmoteLog($funcName)
+	$log_emote_func = $funcName
 EndFunc
 
 
@@ -91,5 +96,6 @@ Func Out($TEXT, $LOGLEVEL = 1)
 		EndSwitch
 		_GUICtrlRichEdit_SetCharColor($log_console, $logColor)
 		_GUICtrlRichEdit_AppendText($log_console, @HOUR & ':' & @MIN & ':' & @SEC & ' - ' & $TEXT & @CRLF)
+		If $log_emote_func <> '' Then Call($log_emote_func, $TEXT, $LOGLEVEL)
 	EndIf
 EndFunc

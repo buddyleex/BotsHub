@@ -21,6 +21,7 @@ Opt('GUICloseOnESC', False)
 #include <StaticConstants.au3>
 #include <GUIConstantsEx.au3>
 #include <WindowsConstants.au3>
+#include <ColorConstants.au3>
 #include <Array.au3>
 #include <GuiRichEdit.au3>
 
@@ -56,7 +57,8 @@ Global Const $ROW_COL_COUNT             = 11
 Global Const $DATA_ALIVE_INDEX      = 0
 Global Const $DATA_SLAVE_INDEX      = 1
 Global Const $DATA_TIMER_INDEX      = 2
-Global Const $DATA_COL_COUNT        = 3
+Global Const $DATA_SHM_ACTIVE_INDEX = 3
+Global Const $DATA_COL_COUNT        = 4
 
 Global Const $COLOR_CHARCOAL = 0x444444
 
@@ -84,6 +86,7 @@ Global $input_cmd_target
 Global $combo_cmd_type
 Global $input_cmd_params
 Global $button_cmd_send
+Global $checkbox_send_to_all
 
 
 ;; ============================================================
@@ -117,7 +120,7 @@ Func CreateBotsHubManagerGUI()
     GUICtrlSetOnEvent($button_add_client,     'GuiAddRow')
 
     Local $headerY = 70
-    GUICtrlCreateLabel('Status',    $GLOBAL_TABLEOFFSETX + 10,   $headerY, 80,  20)
+    GUICtrlCreateLabel('SHM',      $GLOBAL_TABLEOFFSETX + 10,   $headerY, 80,  20)
     GUICtrlCreateLabel('Character', $GLOBAL_TABLEOFFSETX + 100,  $headerY, 180, 20)
     GUICtrlCreateLabel('Farm',      $GLOBAL_TABLEOFFSETX + 290,  $headerY, 180, 20)
     GUICtrlCreateLabel('Config',    $GLOBAL_TABLEOFFSETX + 480,  $headerY, 180, 20)
@@ -125,7 +128,7 @@ Func CreateBotsHubManagerGUI()
     GUICtrlCreateLabel('Stop',      $GLOBAL_TABLEOFFSETX + 800,  $headerY, 80,  20)
     GUICtrlCreateLabel('GUI',       $GLOBAL_TABLEOFFSETX + 890,  $headerY, 80,  20)
     GUICtrlCreateLabel('Uptime',    $GLOBAL_TABLEOFFSETX + 980,  $headerY, 120, 20)
-    GUICtrlCreateLabel('Heartbeat', $GLOBAL_TABLEOFFSETX + 1050, $headerY, 120, 20)
+    GUICtrlCreateLabel('Bot',       $GLOBAL_TABLEOFFSETX + 1050, $headerY, 120, 20)
     GUICtrlCreateLabel('Remove',    $GLOBAL_TABLEOFFSETX + 1110, $headerY, 80,  20)
 
     GuiAddRow()
@@ -137,13 +140,15 @@ Func CreateBotsHubManagerGUI()
 
     GUICtrlCreateLabel('Command:', $GLOBAL_TABLEOFFSETX + 110, $cmdY + 5, 60, 20)
     $combo_cmd_type = GUICtrlCreateCombo('MOVE', $GLOBAL_TABLEOFFSETX + 175, $cmdY, 130, 30)
-    GUICtrlSetData($combo_cmd_type, 'FOLLOW|ATTACK|SKILL|MOVE|STOP|RESURRECT|LOOT|TRAVEL|INVITE|CUSTOM', 'MOVE')
+    GUICtrlSetData($combo_cmd_type, 'FOLLOW|ATTACK|SKILL|MOVE|STOP|RESURRECT|LOOT|TRAVEL|TRAVEL_TO_GH|INVITE|INVITE_ALL|START_FARM|SHUTDOWN|CUSTOM', 'MOVE')
 
     GUICtrlCreateLabel('Params:', $GLOBAL_TABLEOFFSETX + 315, $cmdY + 5, 50, 20)
     $input_cmd_params = GUICtrlCreateInput('', $GLOBAL_TABLEOFFSETX + 370, $cmdY, 300, 30)
 
     $button_cmd_send = GUICtrlCreateButton('Send', $GLOBAL_TABLEOFFSETX + 680, $cmdY, 80, 30)
     GUICtrlSetOnEvent($button_cmd_send, 'SendCommandFromManager')
+
+    $checkbox_send_to_all = GUICtrlCreateCheckbox('Send to ALL active slots', $GLOBAL_TABLEOFFSETX + 10, $cmdY + 35, 200, 20)
 
     GUISetState(@SW_SHOW)
     Info('GW Bot Hub Manager 0.1')
@@ -195,6 +200,7 @@ Func GuiAddRow()
     $client_data[$id][$DATA_ALIVE_INDEX] = True
     $client_data[$id][$DATA_SLAVE_INDEX] = -1
     $client_data[$id][$DATA_TIMER_INDEX] = 0
+    $client_data[$id][$DATA_SHM_ACTIVE_INDEX] = False
 
     ;; Place the row at the bottom of whatever is currently visible
     Local $localY = _GetNextRowY()
@@ -208,8 +214,8 @@ Func GuiAddRow()
     GUICtrlSetGraphic(-1, $GUI_GR_COLOR, $COLOR_CHARCOAL)
     GUICtrlSetGraphic(-1, $GUI_GR_LINE, 0, 0, 1200, 0)
 
-    $client_row[$id][$ROW_STATUS_INDEX] = GUICtrlCreateLabel('Stopped', $GLOBAL_TABLEOFFSETX + 10, $localY, 80, 30, $SS_CENTER)
-    GUICtrlSetBkColor(-1, $COLOR_RED)
+    $client_row[$id][$ROW_STATUS_INDEX] = GUICtrlCreateCheckbox('SHM', $GLOBAL_TABLEOFFSETX + 10, $localY, 80, 30)
+    GUICtrlSetOnEvent($client_row[$id][$ROW_STATUS_INDEX], 'HandleRowActions')
 
     $client_row[$id][$ROW_CHARACTER_INDEX] = GUICtrlCreateInput('No character selected', $GLOBAL_TABLEOFFSETX + 100, $localY, 180, 30)
 
@@ -230,7 +236,8 @@ Func GuiAddRow()
 
     $client_row[$id][$ROW_UPTIME_INDEX] = GUICtrlCreateLabel('00:00:00', $GLOBAL_TABLEOFFSETX + 980, $localY, 120, 30)
 
-    $client_row[$id][$ROW_HEARTBEAT_INDEX] = GUICtrlCreateLabel('0', $GLOBAL_TABLEOFFSETX + 1050, $localY, 60, 30)
+    $client_row[$id][$ROW_HEARTBEAT_INDEX] = GUICtrlCreateLabel('OFF', $GLOBAL_TABLEOFFSETX + 1050, $localY, 60, 30, $SS_CENTER)
+    GUICtrlSetBkColor(-1, $COLOR_RED)
 
     $client_row[$id][$ROW_REMOVE_INDEX] = GUICtrlCreateButton('X', $GLOBAL_TABLEOFFSETX + 1110, $localY, 40, 30)
     GUICtrlSetOnEvent($client_row[$id][$ROW_REMOVE_INDEX], 'HandleRowActions')
@@ -249,6 +256,9 @@ Func HandleRowActions()
         If Not $client_data[$id][$DATA_ALIVE_INDEX] Then ContinueLoop
 
         Switch @GUI_CtrlId
+            Case $client_row[$id][$ROW_STATUS_INDEX]
+                ToggleSHMJoin($id)
+                Return
             Case $client_row[$id][$ROW_START_PAUSE_INDEX]
                 ToggleStartPause($id)
                 Return
@@ -271,16 +281,41 @@ EndFunc
 ;;  ROW ACTIONS
 ;; ============================================================
 
+Func ToggleSHMJoin($id)
+    If GUICtrlRead($client_row[$id][$ROW_STATUS_INDEX]) = $GUI_CHECKED Then
+        $client_data[$id][$DATA_SLAVE_INDEX] = StartBotInstance( _
+            GUICtrlRead($client_row[$id][$ROW_CHARACTER_INDEX]), 'NONE')
+        $client_data[$id][$DATA_SHM_ACTIVE_INDEX] = True
+        GUICtrlSetData($client_row[$id][$ROW_HEARTBEAT_INDEX], 'IDLE')
+        GUICtrlSetBkColor($client_row[$id][$ROW_HEARTBEAT_INDEX], $COLOR_ORANGE)
+        Info('SHM joined (idle mode)')
+    Else
+        _SetRowStopped($id)
+        Info('SHM disconnected')
+    EndIf
+EndFunc
+
 Func ToggleStartPause($id)
     If GUICtrlRead($client_row[$id][$ROW_START_PAUSE_INDEX]) = 'Start' Then
         GUICtrlSetData($client_row[$id][$ROW_START_PAUSE_INDEX], 'Pause')
-        GUICtrlSetData($client_row[$id][$ROW_STATUS_INDEX], 'Running')
-        GUICtrlSetBkColor($client_row[$id][$ROW_STATUS_INDEX], $COLOR_GREEN)
+        GUICtrlSetData($client_row[$id][$ROW_HEARTBEAT_INDEX], 'FARM')
+        GUICtrlSetBkColor($client_row[$id][$ROW_HEARTBEAT_INDEX], $COLOR_GREEN)
         $client_data[$id][$DATA_TIMER_INDEX] = TimerInit()
-        $client_data[$id][$DATA_SLAVE_INDEX] = StartBotInstance( _
-            GUICtrlRead($client_row[$id][$ROW_CHARACTER_INDEX]), _
-            GUICtrlRead($client_row[$id][$ROW_FARM_INDEX]))
-        Info('Instance started')
+
+        If $client_data[$id][$DATA_SHM_ACTIVE_INDEX] Then
+            ; Bot already in SHM — activate farm via inbox command
+            Local $farmName = GUICtrlRead($client_row[$id][$ROW_FARM_INDEX])
+            SendMultiboxMessage($client_data[$id][$DATA_SLAVE_INDEX], $CMD_START_FARM, 0, 0, 0, 0, $farmName)
+            Info('Farm start sent via SHM: ' & $farmName)
+        Else
+            ; Launch bot fresh with selected farm
+            $client_data[$id][$DATA_SLAVE_INDEX] = StartBotInstance( _
+                GUICtrlRead($client_row[$id][$ROW_CHARACTER_INDEX]), _
+                GUICtrlRead($client_row[$id][$ROW_FARM_INDEX]))
+            $client_data[$id][$DATA_SHM_ACTIVE_INDEX] = True
+            GUICtrlSetState($client_row[$id][$ROW_STATUS_INDEX], $GUI_CHECKED)
+            Info('Instance started')
+        EndIf
     Else
         _SetRowStopped($id)
         Info('Instance paused')
@@ -295,9 +330,11 @@ EndFunc
 ;; Shared visual reset used by both ToggleStartPause and SetStopped
 Func _SetRowStopped($id)
     GUICtrlSetData($client_row[$id][$ROW_START_PAUSE_INDEX], 'Start')
-    GUICtrlSetData($client_row[$id][$ROW_STATUS_INDEX], 'Stopped')
-    GUICtrlSetBkColor($client_row[$id][$ROW_STATUS_INDEX], $COLOR_RED)
+    GUICtrlSetData($client_row[$id][$ROW_HEARTBEAT_INDEX], 'OFF')
+    GUICtrlSetBkColor($client_row[$id][$ROW_HEARTBEAT_INDEX], $COLOR_RED)
     GUICtrlSetData($client_row[$id][$ROW_UPTIME_INDEX], '00:00:00')
+    GUICtrlSetState($client_row[$id][$ROW_STATUS_INDEX], $GUI_UNCHECKED)
+    $client_data[$id][$DATA_SHM_ACTIVE_INDEX] = False
     StopBotInstance($client_data[$id][$DATA_SLAVE_INDEX])
 EndFunc
 
@@ -437,15 +474,36 @@ EndFunc
 Func UpdateInstancesUptime()
     For $id = 0 To $next_client_id - 1
         If Not $client_data[$id][$DATA_ALIVE_INDEX] Then ContinueLoop
-        If GUICtrlRead($client_row[$id][$ROW_STATUS_INDEX]) <> 'Running' Then ContinueLoop
 
+        Local $slaveIndex = $client_data[$id][$DATA_SLAVE_INDEX]
+        Local $isSHM = $client_data[$id][$DATA_SHM_ACTIVE_INDEX]
+        Local $isFarming = (GUICtrlRead($client_row[$id][$ROW_START_PAUSE_INDEX]) = 'Pause')
+
+        ; Update BOT status label based on SHM heartbeat
+        If $isSHM Then
+            If IsSlotActive($slaveIndex) Then
+                If $isFarming Then
+                    GUICtrlSetData($client_row[$id][$ROW_HEARTBEAT_INDEX], 'FARM')
+                    GUICtrlSetBkColor($client_row[$id][$ROW_HEARTBEAT_INDEX], $COLOR_GREEN)
+                Else
+                    GUICtrlSetData($client_row[$id][$ROW_HEARTBEAT_INDEX], 'IDLE')
+                    GUICtrlSetBkColor($client_row[$id][$ROW_HEARTBEAT_INDEX], $COLOR_ORANGE)
+                EndIf
+            Else
+                ; Bot was expected to be in SHM but stopped responding
+                GUICtrlSetData($client_row[$id][$ROW_HEARTBEAT_INDEX], 'LOST')
+                GUICtrlSetBkColor($client_row[$id][$ROW_HEARTBEAT_INDEX], $COLOR_ORANGE)
+            EndIf
+        EndIf
+
+        ; Update uptime when farming
+        If Not $isFarming Then ContinueLoop
         Local $localDiff    = TimerDiff($client_data[$id][$DATA_TIMER_INDEX])
         Local $localSeconds = Int($localDiff / 1000)
         Local $localH = Int($localSeconds / 3600)
         Local $localM = Int(Mod($localSeconds, 3600) / 60)
         Local $localS = Mod($localSeconds, 60)
         GUICtrlSetData($client_row[$id][$ROW_UPTIME_INDEX], StringFormat('%02d:%02d:%02d', $localH, $localM, $localS))
-        GUICtrlSetData($client_row[$id][$ROW_HEARTBEAT_INDEX], ReadSlaveToMaster($client_data[$id][$DATA_SLAVE_INDEX], 'heartbeat'))
     Next
 EndFunc
 
@@ -466,9 +524,9 @@ EndFunc
 ;; ============================================================
 
 Func SendCommandFromManager()
-    Local $target = Int(GUICtrlRead($input_cmd_target))
     Local $cmdName = GUICtrlRead($combo_cmd_type)
     Local $paramsStr = GUICtrlRead($input_cmd_params)
+    Local $sendToAll = GUICtrlRead($checkbox_send_to_all) = $GUI_CHECKED
 
     ; Parse command name to constant
     Local $cmd = _CommandNameToConst($cmdName)
@@ -486,8 +544,8 @@ Func SendCommandFromManager()
         If $parts[0] >= 2 Then $p2 = Number($parts[2])
         If $parts[0] >= 3 Then $p3 = Number($parts[3])
         If $parts[0] >= 4 Then $p4 = Number($parts[4])
-        ; If CUSTOM command, treat first param as extraData string
-        If $cmd = $CMD_CUSTOM And $parts[0] >= 1 Then
+        ; START_FARM and CUSTOM use the full param string as extraData
+        If ($cmd = $CMD_CUSTOM Or $cmd = $CMD_START_FARM) And $parts[0] >= 1 Then
             $extraData = $paramsStr
             $p1 = 0
             $p2 = 0
@@ -496,10 +554,23 @@ Func SendCommandFromManager()
         EndIf
     EndIf
 
-    If SendMultiboxMessage($target, $cmd, $p1, $p2, $p3, $p4, $extraData) Then
-        Info('Sent ' & $cmdName & ' to slave ' & $target & ' (' & $paramsStr & ')')
+    If $sendToAll Then
+        Local $states = GetAllActiveAccountStates()
+        Local $count = 0
+        For $i = 0 To UBound($states) - 1
+            Local $s = $states[$i]
+            If SendMultiboxMessage($s['slaveIndex'], $cmd, $p1, $p2, $p3, $p4, $extraData) Then
+                $count += 1
+            EndIf
+        Next
+        Info('Sent ' & $cmdName & ' to ' & $count & ' active slots')
     Else
-        Info('Failed to send ' & $cmdName & ' to slave ' & $target)
+        Local $target = Int(GUICtrlRead($input_cmd_target))
+        If SendMultiboxMessage($target, $cmd, $p1, $p2, $p3, $p4, $extraData) Then
+            Info('Sent ' & $cmdName & ' to slave ' & $target & ' (' & $paramsStr & ')')
+        Else
+            Info('Failed to send ' & $cmdName & ' to slave ' & $target)
+        EndIf
     EndIf
 EndFunc
 
@@ -522,8 +593,14 @@ Func _CommandNameToConst($name)
             Return $CMD_PICK_UP_LOOT
         Case 'TRAVEL'
             Return $CMD_TRAVEL_TO_MAP
+        Case 'TRAVEL_TO_GH'
+            Return $CMD_TRAVEL_TO_GH
         Case 'INVITE'
             Return $CMD_INVITE_TO_PARTY
+        Case 'INVITE_ALL'
+            Return $CMD_INVITE_ALL_ACCOUNTS
+        Case 'START_FARM'
+            Return $CMD_START_FARM
         Case 'CUSTOM'
             Return $CMD_CUSTOM
         Case Else
