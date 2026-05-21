@@ -5,7 +5,8 @@ conf/farm/*
 conf/loot/*
 !conf/farm/Default Farm Configuration.json
 !conf/loot/Default Loot Configuration.json
-.idea/
+.*
+!.github
 .*/
 !.github/
 multibox_debug.log
